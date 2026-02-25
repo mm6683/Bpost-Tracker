@@ -1,0 +1,943 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Bpost Live Tracker</title>
+<!-- Favicon perfectly scaled and centered -->
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><rect width='24' height='24' rx='6' fill='%23e3000f'/><g transform='scale(0.75) translate(4 4)' stroke-linecap='round' stroke-linejoin='round' stroke-width='2.5' stroke='%23ffffff' fill='none'><path d='M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z'/><polyline points='3.27 6.96 12 12.01 20.73 6.96'/><line x1='12' y1='22.08' x2='12' y2='12'/></g></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdn.tailwindcss.com"></script>
+
+<!-- Check Local Storage for Theme Preference before page renders to prevent flashing -->
+<script>
+  if (localStorage.theme === 'dark' || (!('theme' in localStorage) && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+    document.documentElement.classList.add('dark');
+  } else {
+    document.documentElement.classList.remove('dark');
+  }
+</script>
+
+<script>
+  tailwind.config = {
+    darkMode: 'class',
+    theme: {
+      extend: {
+        fontFamily: {
+          sans: ['Inter', 'sans-serif'],
+          mono: ['ui-monospace', 'SFMono-Regular', 'Menlo', 'Monaco', 'Consolas', 'monospace'],
+        },
+        colors: {
+          brand: {
+            DEFAULT: '#e3000f', // Bpost red
+            dark: '#b3000b',
+            light: '#ffeaeb',
+          },
+          surface: '#ffffff',
+          background: '#f8fafc',
+        }
+      }
+    }
+  }
+</script>
+<style>
+  /* Custom scrollbar for timeline */
+  .timeline-scroll::-webkit-scrollbar { width: 6px; }
+  .timeline-scroll::-webkit-scrollbar-track { background: transparent; }
+  .timeline-scroll::-webkit-scrollbar-thumb { background-color: #cbd5e1; border-radius: 20px; }
+  .dark .timeline-scroll::-webkit-scrollbar-thumb { background-color: #475569; }
+
+  /* Map styling */
+  #map { z-index: 10; }
+  .leaflet-popup-content-wrapper { border-radius: 12px; box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1); }
+  .dark .leaflet-popup-content-wrapper { background-color: #1e293b; color: #f1f5f9; box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.5); }
+  .dark .leaflet-popup-tip { background-color: #1e293b; }
+  .leaflet-popup-content { font-family: 'Inter', sans-serif; font-size: 13px; font-weight: 500; margin: 12px 16px; }
+  
+  /* Loader Animation */
+  .loader-bar {
+    width: 100%; height: 4px; background: #ffe5e6; position: relative; overflow: hidden; border-radius: 2px;
+  }
+  .dark .loader-bar { background: #450a0a; }
+  .loader-bar::after {
+    content: ''; position: absolute; left: -50%; top: 0; height: 100%; width: 50%;
+    background: #e3000f; border-radius: 2px; animation: loading 1.5s infinite ease-in-out;
+  }
+  @keyframes loading {
+    0% { left: -50%; }
+    100% { left: 100%; }
+  }
+
+  /* Pulse Ring */
+  .pulse-ring {
+    animation: pulse-ring-anim 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  }
+  @keyframes pulse-ring-anim {
+    0% { transform: scale(0.8); opacity: 0.8; }
+    100% { transform: scale(2.5); opacity: 0; }
+  }
+</style>
+</head>
+<body class="bg-background dark:bg-slate-950 text-slate-800 dark:text-slate-200 antialiased min-h-screen flex flex-col transition-colors duration-200">
+
+<!-- HEADER -->
+<header class="bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 sticky top-0 z-50 shadow-sm transition-colors duration-200">
+  <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
+    <div class="flex flex-col md:flex-row md:items-center justify-between gap-4">
+      <div class="flex items-center gap-2 cursor-pointer group" onclick="goHome()" title="Return Home">
+        <!-- Abstract Brand Logo -->
+        <div class="w-8 h-8 bg-brand rounded-lg flex items-center justify-center shadow-sm group-hover:bg-brand-dark transition-colors">
+          <svg class="w-[18px] h-[18px] text-white" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path><polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline><line x1="12" y1="22.08" x2="12" y2="12"></line></svg>
+        </div>
+        <span class="font-bold text-xl tracking-tight text-slate-900 dark:text-white transition-colors duration-200">bpost<span class="text-slate-400 dark:text-slate-500 font-light ml-1">tracker</span></span>
+      </div>
+      
+      <div class="flex flex-1 max-w-2xl gap-2 relative">
+        <div class="relative flex-1">
+          <svg class="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400 dark:text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
+          <input type="text" id="barcode" class="w-full pl-10 pr-4 py-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand focus:border-transparent transition-all" placeholder="Tracking number" value="">
+        </div>
+        <div class="relative w-24 sm:w-32">
+          <svg class="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400 dark:text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
+          <input type="text" id="postal" class="w-full pl-10 pr-3 py-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand focus:border-transparent transition-all" placeholder="Postal" value="">
+        </div>
+        <button id="trackBtn" onclick="track()" class="bg-brand hover:bg-brand-dark text-white px-5 sm:px-6 py-2.5 rounded-xl text-sm font-semibold shadow-sm shadow-brand/30 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 min-w-[100px]">
+          Track
+        </button>
+
+        <!-- Dark Mode Toggle -->
+        <button id="themeToggle" onclick="toggleTheme()" class="ml-1 sm:ml-2 p-2.5 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700 border border-transparent dark:border-slate-700 transition-colors flex-shrink-0" title="Toggle dark mode">
+          <svg class="w-5 h-5 hidden dark:block" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg>
+          <svg class="w-5 h-5 block dark:hidden" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>
+        </button>
+      </div>
+    </div>
+  </div>
+</header>
+
+<!-- MAIN CONTENT -->
+<main class="flex-1 w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+  
+  <!-- Empty State -->
+  <div id="empty-state" class="flex flex-col items-center justify-center py-20 text-center">
+    <div class="w-32 h-32 text-slate-200 dark:text-slate-800 mb-6 transition-colors duration-200">
+      <svg fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24">
+        <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path>
+        <polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline>
+        <line x1="12" y1="22.08" x2="12" y2="12"></line>
+      </svg>
+    </div>
+    <h2 class="text-2xl font-bold text-slate-800 dark:text-slate-200 mb-2 transition-colors">Track your package</h2>
+    <p class="text-slate-500 dark:text-slate-400 max-w-md transition-colors">Enter your tracking number and postal code in the search bar above to see exactly where your delivery is.</p>
+  </div>
+
+  <!-- Loader -->
+  <div id="loader" style="display:none" class="w-full max-w-md mx-auto mt-20 text-center">
+    <div class="loader-bar mb-4"></div>
+    <p class="text-sm font-medium text-slate-500 dark:text-slate-400 animate-pulse">Retrieving shipment data...</p>
+  </div>
+
+  <!-- Error Box -->
+  <div id="errorBox" style="display:none" class="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-900/50 rounded-2xl p-6 text-center text-red-600 dark:text-red-400 mb-8 max-w-2xl mx-auto flex items-center justify-center gap-3">
+    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
+    <span id="errorMsg" class="font-medium"></span>
+  </div>
+
+  <div id="content" class="space-y-6 hidden pb-20">
+    <!-- Content injected via JS -->
+  </div>
+
+</main>
+
+<script>
+let leafletMap = null;
+let pollInterval = null;
+let isPolling = false;
+let currentTileLayer = null;
+
+const BPOST_API = url => `/proxy?url=${encodeURIComponent(url)}`;
+
+// Map Theme URLs
+function getTileUrl() {
+  return document.documentElement.classList.contains('dark') 
+    ? 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png'
+    : 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png';
+}
+
+function toggleTheme() {
+  const html = document.documentElement;
+  if (html.classList.contains('dark')) {
+    html.classList.remove('dark');
+    localStorage.theme = 'light';
+  } else {
+    html.classList.add('dark');
+    localStorage.theme = 'dark';
+  }
+  
+  // Dynamically update map tile layer if active
+  if (currentTileLayer) {
+    currentTileLayer.setUrl(getTileUrl());
+  }
+}
+
+// UI SVG Icons Helper
+const icons = {
+  check: `<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>`,
+  x: `<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>`,
+  mapPin: `<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>`,
+  refresh: `<svg class="w-4 h-4 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>`
+};
+
+function stopPolling() {
+  if (pollInterval) { clearInterval(pollInterval); pollInterval = null; }
+  isPolling = false;
+  const ind = document.getElementById('poll-indicator');
+  if (ind) ind.remove();
+}
+
+function startPolling(barcode, postal) {
+  if (isPolling) return;
+  isPolling = true;
+
+  if (!document.getElementById('poll-indicator')) {
+    const ind = document.createElement('div');
+    ind.id = 'poll-indicator';
+    ind.className = 'absolute top-0 right-0 mt-4 mr-4 flex items-center gap-2 px-3 py-1 bg-white dark:bg-slate-800 rounded-full shadow-sm border border-slate-200 dark:border-slate-700 text-xs font-medium text-slate-500 dark:text-slate-400 z-50 transition-colors';
+    ind.innerHTML = `
+      <div class="relative flex h-2.5 w-2.5">
+        <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-brand opacity-75"></span>
+        <span class="relative inline-flex rounded-full h-2.5 w-2.5 bg-brand"></span>
+      </div>
+      <span id="poll-label">Live in 10s</span>
+    `;
+    document.querySelector('header > div').appendChild(ind);
+  }
+
+  let countdown = 10;
+  const label = () => document.getElementById('poll-label');
+
+  pollInterval = setInterval(async () => {
+    countdown--;
+    if (label()) label().textContent = `Live in ${countdown}s`;
+
+    if (countdown <= 0) {
+      countdown = 10;
+      if (label()) label().innerHTML = `<span class="flex items-center gap-1">${icons.refresh} Updating</span>`;
+
+      try {
+        const roundRes = await fetch(BPOST_API(`https://track.bpost.cloud/track/itemonroundstatus?itemIdentifier=${barcode}&postalCode=${postal}`));
+        const roundData = await roundRes.json();
+
+        if (roundData.error) {
+          stopPolling();
+          const trackRes = await fetch(BPOST_API(`https://track.bpost.cloud/track/items?itemIdentifier=${barcode}&postalCode=${postal}`));
+          const trackData = await trackRes.json();
+          if (trackData.items?.length) renderPage(trackData.items[0], null);
+          return;
+        }
+        updateRoundSection(roundData);
+      } catch(e) {
+        if (label()) label().textContent = 'Sync failed';
+      }
+    }
+  }, 1000);
+}
+
+function updateRoundSection(round) {
+  const rs = round.itemOnRoundStatus;
+  const stops = rs.nrOfStopsUntilTarget?.[0] ?? '?';
+  const progress = parseFloat(rs.progressUntilTarget?.[0] || 0);
+  const progressPct = Math.min(Math.round(progress * 100), 100);
+  const eta = rs.estimatedDeliveryTimeWindow?.[0] || '';
+
+  const stopNum = document.querySelector('.stop-num');
+  if (stopNum) stopNum.textContent = stops;
+
+  const pLabel = document.querySelector('.progress-pct');
+  if (pLabel) pLabel.textContent = progressPct + '%';
+
+  const fill = document.getElementById('pfill');
+  if (fill) fill.style.width = progressPct + '%';
+
+  const etaVal = document.querySelector('.eta-value');
+  if (etaVal && eta) etaVal.textContent = eta;
+
+  // Map updates
+  if (leafletMap) {
+    const lastLoc = rs.lastKnownLocation?.[0];
+    const postmanLat = parseFloat(lastLoc?.lat?.[0] || lastLoc?.lat || 0);
+    const postmanLng = parseFloat(lastLoc?.long?.[0] || lastLoc?.long || 0);
+    if (postmanLat && postmanLng) {
+      leafletMap.eachLayer(layer => {
+        if (layer._isPostman) leafletMap.removeLayer(layer);
+      });
+      const postmanIcon = L.divIcon({
+        html: `
+          <div class="relative flex items-center justify-center w-8 h-8">
+            <div class="absolute inset-0 bg-brand rounded-full pulse-ring"></div>
+            <div class="relative bg-brand border-2 border-white dark:border-slate-900 w-5 h-5 rounded-full shadow-lg transition-colors"></div>
+          </div>`,
+        className: '', iconAnchor: [16, 16]
+      });
+      const m = L.marker([postmanLat, postmanLng], { icon: postmanIcon }).addTo(leafletMap);
+      m._isPostman = true;
+      m.bindPopup('Delivery Vehicle Location');
+    }
+  }
+}
+
+function goHome() {
+  stopPolling();
+  // Clear the UI
+  document.getElementById('content').style.display = 'none';
+  document.getElementById('errorBox').style.display = 'none';
+  document.getElementById('loader').style.display = 'none';
+  document.getElementById('empty-state').style.display = 'flex';
+  
+  if (leafletMap) { leafletMap.remove(); leafletMap = null; currentTileLayer = null; }
+  
+  // Clear URL without refreshing, wrapped in try-catch to avoid SecurityError in restricted iframes
+  try {
+    history.pushState(null, '', window.location.pathname);
+  } catch(e) {
+    console.warn("Could not update history state in this environment.");
+  }
+}
+
+async function track(updateUrl = true) {
+  const barcode = document.getElementById('barcode').value.trim();
+  const postal   = document.getElementById('postal').value.trim();
+  if (!barcode || !postal) return;
+
+  if (updateUrl) {
+    try {
+      const newUrl = `${window.location.pathname}?itemIdentifier=${encodeURIComponent(barcode)}&postalCode=${encodeURIComponent(postal)}`;
+      history.pushState(null, '', newUrl);
+    } catch(e) {
+      console.warn("Could not update history state in this environment.");
+    }
+  }
+
+  stopPolling();
+
+  const btn = document.getElementById('trackBtn');
+  btn.disabled = true;
+  btn.innerHTML = `${icons.refresh} Tracking...`;
+  
+  document.getElementById('empty-state').style.display = 'none';
+  document.getElementById('loader').style.display = 'block';
+  document.getElementById('errorBox').style.display = 'none';
+  document.getElementById('content').style.display = 'none';
+  document.getElementById('content').innerHTML = '';
+
+  if (leafletMap) { leafletMap.remove(); leafletMap = null; currentTileLayer = null; }
+
+  try {
+    const [trackRes, roundRes] = await Promise.all([
+      fetch(BPOST_API(`https://track.bpost.cloud/track/items?itemIdentifier=${barcode}&postalCode=${postal}`)),
+      fetch(BPOST_API(`https://track.bpost.cloud/track/itemonroundstatus?itemIdentifier=${barcode}&postalCode=${postal}`))
+    ]);
+
+    const trackData = await trackRes.json();
+    const roundData = await roundRes.json();
+
+    document.getElementById('loader').style.display = 'none';
+
+    if (!trackData.items || trackData.items.length === 0) {
+      showError('No shipment found for this tracking number and postal code.');
+      return;
+    }
+
+    const item = trackData.items[0];
+    const onRound = !roundData.error;
+
+    renderPage(item, onRound ? roundData : null);
+
+    if (onRound) startPolling(barcode, postal);
+
+  } catch(e) {
+    document.getElementById('loader').style.display = 'none';
+    showError('Connection failed. Please check your internet or bpost availability.');
+  }
+}
+
+function showError(msg) {
+  const btn = document.getElementById('trackBtn');
+  btn.disabled = false;
+  btn.innerHTML = `Track`;
+  document.getElementById('errorMsg').textContent = msg;
+  document.getElementById('errorBox').style.display = 'flex';
+  document.getElementById('empty-state').style.display = 'none';
+}
+
+function renderPage(item, round) {
+  const btn = document.getElementById('trackBtn');
+  btn.disabled = false;
+  btn.innerHTML = `Track`;
+  
+  const content = document.getElementById('content');
+  content.style.display = 'block';
+  content.innerHTML = buildHTML(item, round);
+
+  if (round) {
+    setTimeout(() => initMap(round, item), 100);
+  }
+}
+
+function renderBadge(val, labelYes, labelNo) {
+  if (val === true)  return `<span class="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-emerald-50 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800 text-[11px] font-bold uppercase tracking-wider transition-colors">${icons.check} ${labelYes || 'Yes'}</span>`;
+  if (val === false) return `<span class="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 border border-slate-200 dark:border-slate-700 text-[11px] font-bold uppercase tracking-wider transition-colors">${icons.x} ${labelNo || 'No'}</span>`;
+  return `<span class="inline-flex items-center px-2 py-1 rounded-md bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700 text-[11px] font-bold uppercase tracking-wider transition-colors">${val}</span>`;
+}
+
+// Pipeline SVG Icon Matcher
+function getStepIcon(stepName, fallbackLabel = '') {
+  const name = (stepName || '').toLowerCase();
+  const label = (fallbackLabel || '').toLowerCase();
+  
+  // Delivered (Home)
+  if ((name.includes('deliver') && !name.includes('out')) || label.includes('deliver')) {
+    return `<svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>`;
+  }
+  // Transit / Shipped (Globe)
+  if (name.includes('transit') || label === 'shipped') {
+    return `<svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/><path d="M2 12h20"/></svg>`;
+  }
+  // Out for delivery / Van
+  if (name.includes('out_for') || name.includes('car') || name.includes('round') || label === 'on the way') {
+    return `<svg class="w-[24px] h-[24px]" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M5 17H3.5a1.5 1.5 0 0 1-1.5-1.5V9a2 2 0 0 1 2-2h10l3 4h3.5a1 1 0 0 1 1 1v3.5a1.5 1.5 0 0 1-1.5 1.5H19"/><path d="M9 17h6"/><circle cx="7" cy="17" r="2"/><circle cx="17" cy="17" r="2"/><path d="M14 7v4h3"/></svg>`;
+  }
+  // Processing (Cog)
+  if (name.includes('process') || label.includes('process')) {
+    return `<svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>`;
+  }
+  // International (Globe)
+  if (name.includes('internat')) {
+    return `<svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/><path d="M2 12h20"/></svg>`;
+  }
+  // Default (In Preparation -> Centered 2D Box with downward hanging side flaps and sharp bottom corners)
+  return `<svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M5 5h14v14H5z"/><path d="M5 5L1.5 11"/><path d="M19 5l3.5 6"/></svg>`;
+}
+
+// Helper to format camelCase or snake_case strings to Normal Spaced Strings
+function formatLabel(str) {
+  if (!str) return '';
+  return str
+    .replace(/_/g, ' ')
+    .replace(/([A-Z])/g, ' $1')
+    .trim()
+    .replace(/^./, s => s.toUpperCase());
+}
+
+// Helper to format addresses without duplicating the street number
+function formatAddress(addr) {
+  if (!addr) return '—';
+  const street = (addr.street || addr.streetName || '').trim();
+  const num = (addr.streetNumber || '').trim();
+  let line1 = street;
+  if (num && !street.endsWith(num)) {
+    line1 += ` ${num}`;
+  }
+  const line2 = `${addr.postcode || ''} ${addr.municipality || ''}`.trim();
+  const line3 = addr.countryCode || '';
+  return [line1, line2, line3].filter(Boolean).join('<br>');
+}
+
+function buildHTML(item, round) {
+  const lang = 'EN';
+  const step  = item.activeStep || {};
+  const stepName = (step.label?.main?.[lang] || '') + ' ' + (step.label?.detail?.[lang] || '');
+  const events = (item.events || []).slice(); // Removed .reverse() so the latest event appears on top
+
+  // PIPELINE
+  const processSteps = item.processOverview?.processSteps || [];
+  let onTheWayCount = 0;
+  
+  const pipelineHTML = processSteps.map((s, idx) => {
+    const isCompleted = s.status === 'completed';
+    const isActive = s.status === 'active';
+    const rawLabel = typeof s.label?.main === 'object' ? (s.label.main[lang] || Object.values(s.label.main)[0]) : (s.label?.main || s.name);
+    let mainLabel = formatLabel(rawLabel);
+    
+    // Rename the FIRST 'On The Way' to 'Shipped'
+    if (mainLabel.toLowerCase() === 'on the way') {
+      onTheWayCount++;
+      if (onTheWayCount === 1) {
+        mainLabel = 'Shipped';
+      }
+    } else if (s.name && s.name.toLowerCase().includes('transit')) {
+      mainLabel = 'Shipped';
+    }
+
+    // Determine icon based on internal step ID or fallback to the label name
+    const icon = getStepIcon(s.name, mainLabel);
+    
+    // EXCLUSIVE background and text coloring logic here tailored for dark mode
+    let ringClass = isCompleted 
+      ? 'bg-brand text-white border-brand' 
+      : isActive 
+        ? 'bg-brand text-white border-2 border-brand shadow-md shadow-brand/30' 
+        : 'bg-slate-50 dark:bg-slate-800 border-2 border-slate-200 dark:border-slate-700 text-slate-400 dark:text-slate-500';
+    let lineClass = isCompleted ? 'bg-brand' : 'bg-slate-200 dark:bg-slate-700';
+    
+    return `
+      <div class="relative flex-1 flex flex-col items-center">
+        ${idx !== processSteps.length - 1 ? `<div class="absolute top-5 left-1/2 w-full h-[2px] ${lineClass} -z-10 transition-colors duration-200"></div>` : ''}
+        
+        <div class="w-10 h-10 rounded-full flex items-center justify-center ${ringClass} z-10 transition-all duration-300">
+          ${icon}
+        </div>
+        
+        <div class="mt-3 text-center px-1">
+          <div class="text-[10px] sm:text-[11px] uppercase tracking-wider font-semibold ${isActive || isCompleted ? 'text-slate-800 dark:text-slate-200' : 'text-slate-400 dark:text-slate-500'} transition-colors duration-200">${mainLabel}</div>
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  // EVENTS
+  const eventsHTML = events.map((e, i) => {
+    const desc = e.key?.[lang]?.description || e.key?.[lang]?.['1'] || '—';
+    const loc = e.location?.locationName ? `${e.location.locationName}${e.location.countryCode ? ', ' + e.location.countryCode : ''}` : (e.location?.countryCode || '');
+    const isFirst = i === 0;
+    
+    return `
+      <div class="relative pl-6 pb-6 last:pb-0 group">
+        <!-- Line -->
+        ${i !== events.length - 1 ? `<div class="absolute left-[9px] top-3 bottom-0 w-px bg-slate-200 dark:bg-slate-800 transition-colors"></div>` : ''}
+        <!-- Dot -->
+        <div class="absolute left-0 top-1.5 w-5 h-5 rounded-full border-4 border-white dark:border-slate-900 transition-colors ${isFirst ? 'bg-brand shadow-sm shadow-brand/30' : 'bg-slate-300 dark:bg-slate-700'}"></div>
+        
+        <div class="flex flex-col sm:flex-row sm:items-baseline sm:justify-between gap-1 sm:gap-4 bg-white/50 dark:bg-slate-900/50 hover:bg-slate-50 dark:hover:bg-slate-800/50 p-3 -mt-3 rounded-xl transition-colors border border-transparent hover:border-slate-100 dark:hover:border-slate-700/50">
+          <div class="flex-1">
+            <p class="text-sm font-medium text-slate-800 dark:text-slate-200 transition-colors">${desc}</p>
+            ${loc ? `<p class="text-xs text-slate-500 dark:text-slate-400 mt-1 flex items-center gap-1 transition-colors">${icons.mapPin} ${loc}</p>` : ''}
+            ${e.irregularity ? `<span class="inline-block mt-2 px-2 py-0.5 bg-amber-100 dark:bg-amber-900/30 text-amber-800 dark:text-amber-400 text-[10px] font-bold uppercase rounded border border-amber-200 dark:border-amber-800/50 transition-colors">Irregularity</span>` : ''}
+          </div>
+          <div class="text-xs text-slate-500 dark:text-slate-400 sm:text-right font-mono whitespace-nowrap transition-colors">
+            <span class="font-medium text-slate-700 dark:text-slate-300">${e.date || ''}</span>
+            <span class="block text-[11px] opacity-75">${e.time || ''}</span>
+          </div>
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  // ELIGIBILITIES
+  const elig = item.eligibilities || {};
+  const eligFlags = [
+    { label: 'Rerouting', val: elig.eligibileForRerouting },
+    { label: 'Preferred pickup', val: elig.eligibileForPreferedAvisage },
+    { label: 'Neighbour deliv.', val: elig.eligibileForNeighbourDelivery },
+    { label: 'Safe place', val: elig.eligibileForSafeplaceDelivery },
+    { label: 'Bulk round', val: elig.eligibileForBulkRound },
+  ];
+  const flagsHTML = eligFlags.map(f => `
+    <div class="flex items-center justify-between py-2 border-b border-slate-100 dark:border-slate-800 last:border-0 transition-colors">
+      <span class="text-sm text-slate-600 dark:text-slate-400 transition-colors">${f.label}</span>
+      ${f.val ? `<div class="w-2.5 h-2.5 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.5)]"></div>` : `<div class="w-2.5 h-2.5 rounded-full bg-slate-200 dark:bg-slate-700 transition-colors"></div>`}
+    </div>
+  `).join('');
+
+  // PARSED DATA
+  const green = item.greenDeliveries || {};
+  const greenPct = green.postalCodePercentage != null ? Math.round(green.postalCodePercentage * 100) + '%' : '—';
+  
+  const sender = item.sender || {};
+  const recv   = item.receiver || {};
+  const orderDate = item.orderDate ? `${item.orderDate.day} ${item.orderDate.time}` : '—';
+  const weightStr = item.weightInGrams ? `${(item.weightInGrams/1000).toFixed(2)} kg` : '—';
+  const services  = (item.services || []).filter((v, i, a) => a.indexOf(v) === i);
+  const prefs    = item.requestedPreferences || {};
+  
+  // SYSTEM FLAGS
+  const sysFlags = [
+    { label: 'Delivered', val: item.shipmentDeliveryStatus },
+    { label: 'Return / Back to sender', val: item.retourOrBackToSender },
+    { label: 'Final mile carrier', val: item.isfinalMileCarrier },
+    { label: 'GDPR compliant', val: item.isGDPRCompliant },
+    { label: 'Secure delivery code', val: item.hasSecureDeliveryCode },
+    { label: 'QR identification', val: item.isEligibleForQRIdentification },
+    { label: 'Rerouted → pickup', val: item.isItemReroutedforPickupPoint },
+    { label: 'Advised item', val: item.isAdvisedItem },
+  ];
+  const sysFlagsHTML = sysFlags.map(f => `
+    <div class="flex items-center gap-2 text-[13px] text-slate-600 dark:text-slate-300 py-1 transition-colors">
+      ${f.val ? `<span class="text-emerald-500 dark:text-emerald-400">${icons.check}</span>` : `<span class="text-slate-300 dark:text-slate-600">${icons.x}</span>`}
+      ${f.label}
+    </div>`).join('');
+
+  // EXTRA SHIPMENT DETAILS (API EXTENSION)
+  const extraShipmentDetailsHTML = [
+    { label: 'Tracking Category', val: item.trackingCategory },
+    { label: 'Customer Ref.', val: item.customerReference },
+    { label: 'Sender Barcode', val: item.senderBarcode },
+    { label: 'Product Code', val: item.product },
+    { label: 'Category', val: item.productCategory },
+    { label: 'Origin Country', val: item.countryOfDepurture },
+    { label: 'Round Name', val: item.roundName },
+    { label: 'Support Contact', val: item.contactForMoreInformation },
+    { label: 'Reason Code', val: item.reasonCode },
+    { label: 'Bbox Category', val: item.bboxRebrandCategory }
+  ].filter(p => p.val).map(p => `
+    <div class="flex flex-col py-2 border-b border-slate-50 dark:border-slate-800/50 last:border-0 transition-colors">
+      <span class="text-[10px] uppercase font-bold text-slate-400 dark:text-slate-500 tracking-wider mb-0.5">${p.label}</span>
+      <span class="text-[13px] font-medium text-slate-800 dark:text-slate-200 break-all">${p.val}</span>
+    </div>
+  `).join('');
+
+  // DETAILED PREFERENCES (API EXTENSION)
+  const reqPrefs = item.requestedPreferences || {};
+  const avisage = reqPrefs.preferredAvisage;
+  let avisageHTML = '';
+  
+  if (avisage && avisage.unitName) {
+    avisageHTML = `
+      <div class="mt-4 p-4 bg-slate-50 dark:bg-slate-800/50 rounded-xl border border-slate-100 dark:border-slate-700/50 transition-colors">
+        <p class="text-[10px] uppercase font-bold tracking-widest text-brand mb-1">Preferred Pickup Point</p>
+        <p class="font-bold text-slate-800 dark:text-slate-200 text-sm">${avisage.unitName}</p>
+        <p class="text-slate-500 dark:text-slate-400 text-xs mt-0.5">${avisage.address?.street} ${avisage.address?.streetNumber || ''}, ${avisage.address?.postalCode} ${avisage.address?.city}</p>
+      </div>
+    `;
+  }
+
+  const prefDetailsList = [
+    { label: 'Requested Method', val: item.requestedDeliveryMethod },
+    { label: 'Active Type', val: item.deliveryPreferenceType },
+    { label: 'Fallback Delivery', val: reqPrefs.fallbackDeliveryType },
+    { label: 'Comm. Language', val: reqPrefs.language },
+    { label: 'Security Match', val: reqPrefs.matchedSecurityLevel?.matchedReason ? `${reqPrefs.matchedSecurityLevel.matchedReason} (${reqPrefs.matchedSecurityLevel.securityLevel})` : null }
+  ].filter(p => p.val).map(p => `
+    <div class="flex justify-between items-center py-2.5 border-b border-slate-50 dark:border-slate-800/50 last:border-0 transition-colors">
+      <span class="text-xs font-medium text-slate-500 dark:text-slate-400">${p.label}</span>
+      <span class="text-xs font-bold text-slate-800 dark:text-slate-200 text-right uppercase tracking-wide">${p.val}</span>
+    </div>
+  `).join('');
+
+
+  return `
+    <!-- HERO STATUS -->
+    <div class="bg-white dark:bg-slate-900 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-800 overflow-hidden transition-colors duration-200">
+      <div class="p-6 sm:p-8 flex flex-col md:flex-row md:items-center justify-between gap-6">
+        <div>
+          <div class="flex items-center gap-3 mb-2">
+            <h1 class="text-3xl font-bold font-mono text-slate-900 dark:text-white tracking-tight transition-colors">${item.itemCode || '—'}</h1>
+            <span class="px-3 py-1 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 rounded-full text-xs font-semibold tracking-wide uppercase transition-colors">${item.shipmentType || 'Parcel'}</span>
+          </div>
+          <div class="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm text-slate-500 dark:text-slate-400 transition-colors">
+            <span class="flex items-center gap-1">${getStepIcon('prepare')} ${item.productName || 'Standard'}</span>
+            <span class="w-1 h-1 bg-slate-300 dark:bg-slate-600 rounded-full transition-colors"></span>
+            <span>Network entry: <strong class="font-medium text-slate-700 dark:text-slate-200">${item.inNetworkDate || '—'}</strong></span>
+          </div>
+        </div>
+        
+        <div class="md:text-right bg-slate-50 dark:bg-slate-800/50 p-4 rounded-xl border border-slate-100 dark:border-slate-700/50 min-w-[240px] transition-colors">
+          <p class="text-[10px] font-bold uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-1 transition-colors">Current Status</p>
+          <p class="text-lg font-bold text-brand leading-tight transition-colors">${stepName.trim() || step.knownProcessStep || '—'}</p>
+          ${item.reasonCode ? `<p class="text-xs text-slate-500 dark:text-slate-400 mt-1 transition-colors">${item.reasonCode}</p>` : ''}
+        </div>
+      </div>
+      
+      <!-- PIPELINE -->
+      <div class="bg-slate-50/50 dark:bg-slate-900 border-t border-slate-100 dark:border-slate-800 p-6 sm:px-8 transition-colors">
+        <div class="flex w-full max-w-4xl mx-auto relative z-0">
+          ${pipelineHTML}
+        </div>
+        ${item.processOverview?.activeStepTextKey ? `<p class="text-center text-sm text-slate-500 dark:text-slate-400 mt-6 max-w-2xl mx-auto transition-colors">${item.processOverview.textKey?.[lang]?.['1'] || ''}</p>` : ''}
+      </div>
+    </div>
+
+    <!-- ON ROUND TRACKING (IF ACTIVE) -->
+    ${round ? buildRoundHTML(round) : ''}
+
+    <!-- TWO COL GRID: ADDRESSES -->
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+      <div class="bg-white dark:bg-slate-900 p-6 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-800 relative overflow-hidden transition-colors duration-200">
+        <div class="absolute top-0 left-0 w-1 h-full bg-slate-200 dark:bg-slate-700 transition-colors"></div>
+        <h3 class="text-xs font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest mb-4 transition-colors">Sender</h3>
+        <p class="font-bold text-slate-800 dark:text-slate-100 text-lg mb-1 transition-colors">${sender.name || 'Unknown Sender'}</p>
+        <div class="text-slate-500 dark:text-slate-400 text-sm leading-relaxed transition-colors">
+          ${formatAddress(sender)}
+        </div>
+      </div>
+      
+      <div class="bg-white dark:bg-slate-900 p-6 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-800 relative overflow-hidden transition-colors duration-200">
+        <div class="absolute top-0 left-0 w-1 h-full bg-brand transition-colors"></div>
+        <h3 class="text-xs font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest mb-4 transition-colors">Recipient</h3>
+        <p class="font-bold text-slate-800 dark:text-slate-100 text-lg mb-1 transition-colors">${recv.name || 'Unknown Recipient'}</p>
+        <div class="text-slate-500 dark:text-slate-400 text-sm leading-relaxed transition-colors">
+          ${formatAddress(recv)}
+        </div>
+      </div>
+    </div>
+
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      
+      <!-- TIMELINE -->
+      <div class="bg-white dark:bg-slate-900 p-6 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-800 lg:col-span-2 transition-colors duration-200">
+        <h3 class="text-sm font-bold text-slate-800 dark:text-slate-100 mb-6 flex items-center gap-2 transition-colors">
+          <svg class="w-5 h-5 text-slate-400 dark:text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+          Tracking History
+        </h3>
+        <div class="max-h-[500px] overflow-y-auto timeline-scroll pr-4">
+          ${eventsHTML}
+        </div>
+      </div>
+
+      <!-- DETAILS -->
+      <div class="space-y-6">
+        <!-- DETAILS CARD -->
+        <div class="bg-white dark:bg-slate-900 p-6 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-800 transition-colors duration-200">
+          <h3 class="text-sm font-bold text-slate-800 dark:text-slate-100 mb-4 transition-colors">Details</h3>
+          <div class="space-y-3">
+            <div class="flex justify-between text-sm transition-colors"><span class="text-slate-500 dark:text-slate-400">Weight</span><span class="font-medium text-slate-800 dark:text-slate-200">${weightStr}</span></div>
+            <div class="flex justify-between text-sm transition-colors"><span class="text-slate-500 dark:text-slate-400">Order Date</span><span class="font-medium text-slate-800 dark:text-slate-200">${orderDate}</span></div>
+            <div class="flex justify-between text-sm transition-colors"><span class="text-slate-500 dark:text-slate-400">Method</span><span class="font-medium text-slate-800 dark:text-slate-200">${item.requestedDeliveryMethod || '—'}</span></div>
+            <div class="flex justify-between text-sm transition-colors"><span class="text-slate-500 dark:text-slate-400">Signature</span><span class="font-medium text-slate-800 dark:text-slate-200">${item.signatureViewType || '—'}</span></div>
+          </div>
+          ${services.length ? `
+            <div class="mt-4 pt-4 border-t border-slate-100 dark:border-slate-800 flex flex-wrap gap-2 transition-colors">
+              ${services.map(s => `<span class="px-2.5 py-1 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 rounded-md text-[10px] font-bold uppercase tracking-wider transition-colors">${s}</span>`).join('')}
+            </div>
+          ` : ''}
+        </div>
+        
+        <!-- GREEN DELIVERY -->
+        <div class="bg-gradient-to-br from-emerald-50 to-emerald-100/50 dark:from-emerald-950/40 dark:to-emerald-900/20 p-6 rounded-2xl border border-emerald-100 dark:border-emerald-900/50 transition-colors duration-200">
+          <div class="flex items-center gap-2 mb-4">
+            <div class="w-8 h-8 rounded-full bg-emerald-100 dark:bg-emerald-900/50 text-emerald-600 dark:text-emerald-400 flex items-center justify-center transition-colors">
+              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z"></path></svg>
+            </div>
+            <h3 class="text-sm font-bold text-emerald-900 dark:text-emerald-300 transition-colors">Green Delivery</h3>
+          </div>
+          <div class="flex items-end gap-2 mb-2">
+            <span class="text-4xl font-black text-emerald-600 dark:text-emerald-400 tracking-tight leading-none transition-colors">${greenPct}</span>
+            <span class="text-xs text-emerald-700 dark:text-emerald-400/80 font-medium mb-1 transition-colors">of deliveries in your area</span>
+          </div>
+          <p class="text-xs text-emerald-600 dark:text-emerald-400 mb-4 transition-colors">Transport: <strong>${green.romaRoundMainTransportType || 'Standard'}</strong></p>
+          
+          <div class="bg-white/60 dark:bg-slate-900/60 rounded-xl p-3 text-sm transition-colors">
+            <div class="flex justify-between items-center">
+              <span class="text-emerald-800 dark:text-emerald-300 font-medium transition-colors">This shipment</span>
+              ${renderBadge(green.shipmentDeliveredGreenWay, 'Eco-friendly', 'Standard')}
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- LOWER GRIDS -->
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+      
+      <!-- DELIVERY PREFERENCES MODIFIED -->
+      <div class="bg-white dark:bg-slate-900 p-6 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-800 transition-colors duration-200">
+        <div class="flex items-center justify-between mb-4">
+          <h3 class="text-sm font-bold text-slate-800 dark:text-slate-100 transition-colors">Delivery Preferences</h3>
+          ${item.isDeliveryPreferenceActive ? `<div class="inline-flex items-center gap-1.5 px-2.5 py-1 bg-brand-light dark:bg-brand-900/30 text-brand-dark dark:text-brand-400 rounded-full text-xs font-bold border border-brand/20 dark:border-brand/30"><div class="w-1.5 h-1.5 bg-brand rounded-full"></div> Active</div>` : ''}
+        </div>
+        
+        <p class="text-sm text-slate-600 dark:text-slate-400 mb-6 transition-colors">${item.preferenceText?.txt?.[lang] || 'Specific delivery preferences have been set for this shipment.'}</p>
+        
+        <div class="grid grid-cols-2 gap-4 mb-6">
+          <div class="bg-slate-50 dark:bg-slate-800/50 p-3 rounded-xl border border-slate-100 dark:border-slate-700/50 transition-colors">
+            <p class="text-[10px] uppercase font-bold text-slate-400 dark:text-slate-500 mb-2 transition-colors">Fallback Option</p>
+            ${renderBadge(prefs.fallbackDeliveryStatus?.active, 'Active', 'Inactive')}
+          </div>
+          <div class="bg-slate-50 dark:bg-slate-800/50 p-3 rounded-xl border border-slate-100 dark:border-slate-700/50 transition-colors">
+            <p class="text-[10px] uppercase font-bold text-slate-400 dark:text-slate-500 mb-2 transition-colors">Rerouting</p>
+            ${renderBadge(prefs.reroutingStatus?.active, 'Active', 'Inactive')}
+          </div>
+        </div>
+
+        <!-- Injected Detail Attributes -->
+        <div class="mt-4">
+          ${prefDetailsList}
+        </div>
+        
+        <!-- Preferred Pickup Inject -->
+        ${avisageHTML}
+
+        ${item.linkToDeliveryPreferences ? `<a href="${item.linkToDeliveryPreferences}" target="_blank" class="mt-6 inline-flex items-center gap-1 text-sm font-semibold text-brand hover:text-brand-dark transition-colors">Manage Preferences &rarr;</a>` : ''}
+      </div>
+
+      <!-- SHIPMENT DETAILS MODIFIED -->
+      <div class="bg-white dark:bg-slate-900 p-6 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-800 transition-colors duration-200">
+        <h3 class="text-sm font-bold text-slate-800 dark:text-slate-100 mb-4 transition-colors">Shipment Details</h3>
+        
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1 mb-6">
+          ${sysFlagsHTML}
+        </div>
+        
+        <!-- Extra Shipment Information -->
+        <div class="border-t border-slate-100 dark:border-slate-800 transition-colors pt-2">
+           ${extraShipmentDetailsHTML}
+        </div>
+        
+        <div class="mt-6 pt-6 border-t border-slate-100 dark:border-slate-800 transition-colors">
+           <h4 class="text-[10px] uppercase font-bold text-slate-400 dark:text-slate-500 tracking-wider mb-3 transition-colors">Service Eligibilities</h4>
+           ${flagsHTML}
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function buildRoundHTML(round) {
+  const rs = round.itemOnRoundStatus;
+  const stops = rs.nrOfStopsUntilTarget?.[0] || '?';
+  const progress = parseFloat(rs.progressUntilTarget?.[0] || 0);
+  const progressPct = Math.min(Math.round(progress * 100), 100);
+  const eta = rs.estimatedDeliveryTimeWindow?.[0] || '';
+
+  return `
+    <div class="bg-white dark:bg-slate-900 rounded-2xl shadow-xl shadow-brand/5 border-2 border-brand overflow-hidden flex flex-col md:flex-row relative transition-colors duration-200">
+      <!-- Info Panel -->
+      <div class="p-6 md:p-8 md:w-1/3 flex flex-col justify-center bg-brand text-white z-10 transition-colors">
+        <div class="inline-flex items-center gap-2 px-3 py-1 bg-white/20 rounded-full text-xs font-bold tracking-widest uppercase mb-6 w-max border border-white/30 backdrop-blur-sm">
+          <div class="w-2 h-2 rounded-full bg-white animate-pulse"></div> Live Tracking
+        </div>
+        
+        <h2 class="text-2xl font-bold mb-2">Driver is approaching</h2>
+        <p class="text-brand-light text-sm mb-8 opacity-90">Your package is out for delivery right now.</p>
+        
+        <div class="bg-white/10 rounded-xl p-4 border border-white/20 backdrop-blur-sm mb-6">
+          <p class="text-[10px] uppercase font-bold tracking-widest text-brand-light mb-1">Stops Away</p>
+          <p class="text-5xl font-black stop-num tracking-tighter">${stops}</p>
+        </div>
+
+        ${eta ? `
+        <div class="bg-white dark:bg-slate-800 text-slate-900 dark:text-white rounded-xl p-4 shadow-lg transition-colors">
+          <p class="text-[10px] uppercase font-bold tracking-widest text-slate-400 dark:text-slate-500 mb-1 transition-colors">Estimated Arrival</p>
+          <p class="text-xl font-black eta-value text-brand">${eta}</p>
+        </div>` : ''}
+        
+        <div class="mt-8">
+          <div class="flex justify-between text-xs font-bold uppercase tracking-wider mb-2 text-brand-light">
+            <span>Progress</span>
+            <span class="progress-pct">${progressPct}%</span>
+          </div>
+          <div class="h-2 w-full bg-black/20 rounded-full overflow-hidden">
+            <div id="pfill" class="h-full bg-white transition-all duration-1000 ease-out" style="width:0%"></div>
+          </div>
+        </div>
+      </div>
+      
+      <!-- Map Container -->
+      <div class="h-[300px] md:h-auto md:w-2/3 relative bg-slate-100 dark:bg-slate-800 transition-colors duration-200">
+        <div id="map" class="absolute inset-0 w-full h-full"></div>
+      </div>
+    </div>
+  `;
+}
+
+function initMap(round, item) {
+  const rs = round.itemOnRoundStatus;
+  const lastLoc = rs.lastKnownLocation?.[0];
+  const targetLoc = rs.targetLocation?.[0];
+
+  const fill = document.getElementById('pfill');
+  if (fill) {
+    const progress = parseFloat(rs.progressUntilTarget?.[0] || 0);
+    setTimeout(() => fill.style.width = Math.min(Math.round(progress * 100), 100) + '%', 100);
+  }
+
+  if (!document.getElementById('map')) return;
+
+  const postmanLat = parseFloat(lastLoc?.lat?.[0] || lastLoc?.lat || 0);
+  const postmanLng = parseFloat(lastLoc?.long?.[0] || lastLoc?.long || 0);
+  const targetLat  = parseFloat(targetLoc?.lat?.[0] || targetLoc?.lat || 0);
+  const targetLng  = parseFloat(targetLoc?.long?.[0] || targetLoc?.long || 0);
+
+  leafletMap = L.map('map', { zoomControl: false });
+  L.control.zoom({ position: 'bottomright' }).addTo(leafletMap);
+
+  // Initialize Tile Layer depending on current theme
+  currentTileLayer = L.tileLayer(getTileUrl(), {
+    attribution: '© OpenStreetMap contributors © CARTO',
+    maxZoom: 19,
+    subdomains: 'abcd'
+  }).addTo(leafletMap);
+
+  const markers = [];
+
+  // Postman Marker
+  if (postmanLat && postmanLng) {
+    const postmanIcon = L.divIcon({
+      html: `
+        <div class="relative flex items-center justify-center w-8 h-8">
+          <div class="absolute inset-0 bg-brand rounded-full pulse-ring"></div>
+          <div class="relative bg-brand border-2 border-white dark:border-slate-900 w-5 h-5 rounded-full shadow-lg transition-colors"></div>
+        </div>`,
+      className: '', iconAnchor: [16, 16]
+    });
+    const m = L.marker([postmanLat, postmanLng], { icon: postmanIcon }).addTo(leafletMap);
+    m._isPostman = true;
+    m.bindPopup('Delivery Vehicle Location');
+    markers.push([postmanLat, postmanLng]);
+  }
+
+  // Target Marker
+  if (targetLat && targetLng) {
+    const targetIcon = L.divIcon({
+      html: `
+        <div class="bg-slate-800 dark:bg-slate-100 text-white dark:text-slate-900 w-8 h-8 rounded-full border-2 border-white dark:border-slate-900 shadow-lg flex items-center justify-center transition-colors">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"></path></svg>
+        </div>
+        <div class="w-0 h-0 border-l-[6px] border-r-[6px] border-t-[8px] border-l-transparent border-r-transparent border-t-slate-800 dark:border-t-slate-100 absolute -bottom-1.5 left-[10px] transition-colors"></div>
+      `,
+      className: 'relative', iconAnchor: [16, 36]
+    });
+    const m = L.marker([targetLat, targetLng], { icon: targetIcon })
+      .addTo(leafletMap)
+      .bindPopup('Delivery Destination');
+    markers.push([targetLat, targetLng]);
+  }
+
+  // Draw path
+  if (markers.length === 2) {
+    L.polyline(markers, { color: '#e3000f', weight: 3, dashArray: '6 8', opacity: 0.6 }).addTo(leafletMap);
+    leafletMap.fitBounds(markers, { padding: [60, 60] });
+  } else if (markers.length === 1) {
+    leafletMap.setView(markers[0], 14);
+  } else {
+    leafletMap.setView([50.85, 4.35], 8); // default: Belgium
+  }
+}
+
+// Support browser back/forward buttons
+window.addEventListener('popstate', () => {
+  const params = new URLSearchParams(window.location.search);
+  const itemIdentifier = params.get('itemIdentifier');
+  const postalCode = params.get('postalCode');
+  
+  if (itemIdentifier && postalCode) {
+    document.getElementById('barcode').value = itemIdentifier;
+    document.getElementById('postal').value = postalCode;
+    track(false);
+  } else {
+    goHome();
+  }
+});
+
+// Auto-track on load if URL parameters exist
+window.addEventListener('load', () => {
+  const params = new URLSearchParams(window.location.search);
+  const itemIdentifier = params.get('itemIdentifier');
+  const postalCode = params.get('postalCode');
+  
+  if (itemIdentifier && postalCode) {
+    document.getElementById('barcode').value = itemIdentifier;
+    document.getElementById('postal').value = postalCode;
+    track(false);
+  } else {
+    goHome();
+  }
+});
+</script>
+</body>
+</html>
