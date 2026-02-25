@@ -1,0 +1,14 @@
+{
+  "name": "bpost-tracker",
+  "version": "1.0.0",
+  "description": "Bpost package tracker hosted on Cloudflare Workers",
+  "private": true,
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "tail": "wrangler tail"
+  },
+  "devDependencies": {
+    "wrangler": "^3.0.0"
+  }
+}
