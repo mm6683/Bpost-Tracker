@@ -189,7 +189,8 @@ const icons = {
   check: `<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>`,
   x: `<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>`,
   mapPin: `<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>`,
-  refresh: `<svg class="w-4 h-4 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>`
+  refresh: `<svg class="w-4 h-4 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>`,
+  clock: `<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" stroke-width="2"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 7v5l3 3"></path></svg>`
 };
 
 function stopPolling() {
@@ -447,6 +448,49 @@ function formatAddress(addr) {
   return [line1, line2, line3].filter(Boolean).join('<br>');
 }
 
+// Formats an API date string ("YYYY-MM-DD") into e.g. "Friday 21 August"
+function formatExpectedDate(dayStr) {
+  if (!dayStr) return '';
+  const parts = dayStr.split('-').map(Number);
+  if (parts.length !== 3 || parts.some(isNaN)) return dayStr;
+  const [y, m, d] = parts;
+  const date = new Date(y, m - 1, d);
+  if (isNaN(date.getTime())) return dayStr;
+  return date.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' });
+}
+
+// Fills in the {{placeholder}} tokens bpost's processOverview.textKey strings use,
+// and stitches the numbered lines into a single sentence. When we don't actually
+// have an expected delivery window yet, the date/time lines and the placeholder
+// text for them are skipped rather than rendered empty.
+function buildProcessMessage(item, lang) {
+  const textKey = item.processOverview?.textKey?.[lang];
+  if (!textKey) return '';
+
+  const range = item.expectedDeliveryTimeRange;
+  const hasRange = !!(range && range.day);
+
+  const vars = {
+    productCategoryName: item.productCategory || item.productName || 'parcel',
+    expectedDeliveryDate: hasRange ? formatExpectedDate(range.day) : '',
+    expectedDeliveryTime1: hasRange ? (range.time1 || '') : '',
+    expectedDeliveryTime2: hasRange ? (range.time2 || '') : '',
+    postmanFirstName: item.postmanFirstName || ''
+  };
+
+  return Object.keys(textKey)
+    .map(Number)
+    .sort((a, b) => a - b)
+    // Skip the "we'll let you know once we have more details" line when we
+    // already have a concrete delivery window, keep it otherwise.
+    .filter(k => hasRange ? k <= 5 : (k === 1 || k >= 6))
+    .map(String)
+    .map(k => textKey[k])
+    .filter(Boolean)
+    .map(s => s.replace(/\{\{(\w+)\}\}/g, (_, key) => (vars[key] != null ? vars[key] : '')))
+    .join(' ');
+}
+
 function buildHTML(item, round) {
   const lang = 'EN';
   const step  = item.activeStep || {};
@@ -635,10 +679,18 @@ function buildHTML(item, round) {
           </div>
         </div>
         
-        <div class="md:text-right bg-slate-50 dark:bg-slate-800/50 p-4 rounded-xl border border-slate-100 dark:border-slate-700/50 min-w-[240px] transition-colors">
-          <p class="text-[10px] font-bold uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-1 transition-colors">Current Status</p>
-          <p class="text-lg font-bold text-brand leading-tight transition-colors">${stepName.trim() || step.knownProcessStep || '—'}</p>
-          ${item.reasonCode ? `<p class="text-xs text-slate-500 dark:text-slate-400 mt-1 transition-colors">${item.reasonCode}</p>` : ''}
+        <div class="flex flex-col sm:flex-row md:flex-col gap-4">
+          <div class="md:text-right bg-slate-50 dark:bg-slate-800/50 p-4 rounded-xl border border-slate-100 dark:border-slate-700/50 min-w-[240px] transition-colors">
+            <p class="text-[10px] font-bold uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-1 transition-colors">Current Status</p>
+            <p class="text-lg font-bold text-brand leading-tight transition-colors">${stepName.trim() || step.knownProcessStep || '—'}</p>
+            ${item.reasonCode ? `<p class="text-xs text-slate-500 dark:text-slate-400 mt-1 transition-colors">${item.reasonCode}</p>` : ''}
+          </div>
+          ${item.expectedDeliveryTimeRange?.day ? `
+          <div class="md:text-right bg-slate-50 dark:bg-slate-800/50 p-4 rounded-xl border border-slate-100 dark:border-slate-700/50 min-w-[240px] transition-colors">
+            <p class="text-[10px] font-bold uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-1 flex items-center gap-1 md:justify-end transition-colors">${icons.clock} Estimated Delivery</p>
+            <p class="text-lg font-bold text-slate-800 dark:text-slate-100 leading-tight transition-colors">${formatExpectedDate(item.expectedDeliveryTimeRange.day)}</p>
+            ${item.expectedDeliveryTimeRange.time1 && item.expectedDeliveryTimeRange.time2 ? `<p class="text-xs text-slate-500 dark:text-slate-400 mt-1 transition-colors">between ${item.expectedDeliveryTimeRange.time1} and ${item.expectedDeliveryTimeRange.time2}</p>` : ''}
+          </div>` : ''}
         </div>
       </div>
       
@@ -647,7 +699,7 @@ function buildHTML(item, round) {
         <div class="flex w-full max-w-4xl mx-auto relative z-0">
           ${pipelineHTML}
         </div>
-        ${item.processOverview?.activeStepTextKey ? `<p class="text-center text-sm text-slate-500 dark:text-slate-400 mt-6 max-w-2xl mx-auto transition-colors">${item.processOverview.textKey?.[lang]?.['1'] || ''}</p>` : ''}
+        ${item.processOverview?.activeStepTextKey ? `<p class="text-center text-sm text-slate-500 dark:text-slate-400 mt-6 max-w-2xl mx-auto transition-colors">${buildProcessMessage(item, lang)}</p>` : ''}
       </div>
     </div>
 
