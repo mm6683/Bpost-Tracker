@@ -161,11 +161,13 @@ let currentTileLayer = null;
 
 const BPOST_API = url => `/proxy?url=${encodeURIComponent(url)}`;
 
+// CARTO basemaps now require a free API key: https://carto.com/basemaps/apikey
+const CARTO_KEY = 'cb1_462c_1_8a9ce6034766eec9258ef774';
+
 // Map Theme URLs
 function getTileUrl() {
-  return document.documentElement.classList.contains('dark') 
-    ? 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png'
-    : 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png';
+  const style = document.documentElement.classList.contains('dark') ? 'dark_all' : 'light_all';
+  return `https://{s}.basemaps.cartocdn.com/rastertiles/${style}/{z}/{x}/{y}.png?key=${CARTO_KEY}`;
 }
 
 function toggleTheme() {
